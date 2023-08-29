@@ -7,6 +7,7 @@ sarah-gpt-bot.code-workspace
 sarahai-chat-gpt-bot.json
 /consts/admins.py
 /consts/payment_consts.py
+/consts/access_keys.py
 /consts/database_url.py
 venv
 qr_temp.jpg
