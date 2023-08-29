@@ -78,7 +78,7 @@ async def user_messages(message):
   tokens_count = user['tokens']
 
   if tokens_count <= 0:
-    await send(message, 'У вас закончились токены.\n/buy - Купить токены\n/ref - Пригласи друга и получи 10 токенов')
+    await send(message, 'У вас закончились токены.\n/buy - Купить токены\n/ref - Пригласи друга и получи 15 токенов')
     return
 
   await bot.send_chat_action(message.from_user.id, 'typing')
@@ -96,9 +96,9 @@ async def add_referal_tokens(unique_code, name):
     print(f'ERR: Incorrect referal link {unique_code}')
     return
 
-  user['tokens'] = user['tokens'] + 10
+  user['tokens'] = user['tokens'] + 15
   db_service.set_obj_by_id(USERS_DB_KEY, unique_code, user)
-  await bot.send_message(unique_code, f'Ваш друг <b>{name}</b> зарегистрировался по вашей реферальной ссылке!\nВам начислено 10 токенов\n\n/tokens - Остаток токенов', parse_mode='html')
+  await bot.send_message(unique_code, f'Ваш друг <b>{name}</b> зарегистрировался по вашей реферальной ссылке!\nВам начислено 15 токенов\n\n/tokens - Остаток токенов', parse_mode='html')
 
 def add_user_to_db(id, username):
   if db_service.is_obj_exists(USERS_DB_KEY, id):
@@ -107,7 +107,7 @@ def add_user_to_db(id, username):
 
   new_user = { 'username': username }
   new_user['created_at'] = time.time() * 1000
-  new_user['tokens'] = 10
+  new_user['tokens'] = 25
 
   db_service.set_obj_by_id(USERS_DB_KEY, id, new_user)
   return True
