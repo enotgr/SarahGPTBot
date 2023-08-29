@@ -69,16 +69,16 @@ async def buy_15000_tokens(callback: types.CallbackQuery):
 
 @dp.message_handler(commands=['buy'])
 async def donate(message: types.Message):
-  await bot.send_message(message.from_user.id, 'В ближайшее время покупка токенов будет доступна, но не сейчас ;(')
-  return
+  # await bot.send_message(message.from_user.id, 'В ближайшее время покупка токенов будет доступна, но не сейчас ;(')
+  # return
 
   # TODO: enable donations
 
-  # keyboard = create_keyboard()
-  # await message.answer(
-  #   'Выберите количество токенов:',
-  #   reply_markup=keyboard
-  # )
+  keyboard = create_keyboard()
+  await message.answer(
+    'Выберите количество токенов:',
+    reply_markup=keyboard
+  )
 
 async def send_invoice(message, tokens, amount):
   payment = create_payment(amount, tokens)

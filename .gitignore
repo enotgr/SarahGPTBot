@@ -5,6 +5,7 @@ bot_token.py
 payment_token.py
 sarah-gpt-bot.code-workspace
 sarahai-chat-gpt-bot.json
+sarah_gpt_bot.service
 /consts/admins.py
 /consts/payment_consts.py
 /consts/access_keys.py

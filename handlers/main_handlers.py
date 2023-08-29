@@ -59,6 +59,7 @@ async def get_users_count_admin(message):
 @dp.message_handler(commands=['reset'])
 async def reset_context(message):
   openai_request.reset_context(message.from_user.id)
+  send(message, 'Контекст очищен.')
 
 @dp.errors_handler(exception=BotBlocked)
 async def bot_blocked_handler(update: Update, exception: BotBlocked):
