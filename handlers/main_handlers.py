@@ -42,7 +42,7 @@ async def ref(message):
   img.save('qr_temp.jpg')
   await send(message, f'Реферальная ссылка:\n{link}')
   await bot.send_photo(message.chat.id, photo=open('qr_temp.jpg', 'rb'))
-  await send(message, 'Просто отправьте ссылку другу или покажите ему qrcode!\nЗа каждого приведённого друга вы получите 10 токенов!')
+  await send(message, 'Просто отправьте ссылку другу или покажите ему qrcode!\nЗа каждого приведённого друга вы получите 15 токенов!')
 
 @dp.message_handler(commands=['tokens'])
 async def tokens(message):
