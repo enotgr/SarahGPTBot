@@ -78,7 +78,7 @@ async def user_messages(message):
   tokens_count = user['tokens']
 
   if tokens_count <= 0:
-    await send(message, 'У вас закончились токены.\n/buy - Купить токены\n/ref - Пригласи друга и получи 15 токенов')
+    await send(message, 'У вас закончились токены.\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
     return
 
   await bot.send_chat_action(message.from_user.id, 'typing')
