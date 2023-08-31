@@ -84,7 +84,7 @@ async def user_messages(message):
   await bot.send_chat_action(message.from_user.id, 'typing')
 
   answer: str = openai_request.lets_talk(message.from_user.id, message.text)
-  await send(message, answer)
+  await bot.send_message(message.from_user.id, answer)
   user['tokens'] = tokens_count - 1
   db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
 
