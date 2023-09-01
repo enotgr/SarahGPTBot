@@ -75,7 +75,7 @@ async def bot_blocked_handler(update: Update, exception: BotBlocked):
 @dp.message_handler(commands=['image'])
 async def request_image(message):
   if message.from_user.id in image_requesters:
-    await send(message, 'Введите запрос.\nНапример: <i>Белый сиамский кот</i>')
+    await send(message, 'Введите запрос.\nНапример: <b>Белый сиамский кот</b>')
     return
   image_requesters.append(message.from_user.id)
   keyboard = InlineKeyboardMarkup()
@@ -84,8 +84,9 @@ async def request_image(message):
     callback_data='cancel_generate_image')
   )
   await message.answer(
-    f'Введите запрос для генерации изображения или нажмите кнопку для отмены.\nГенерация одного изображения стоит {image_cost} токенов',
-    reply_markup=keyboard
+    f'Введите запрос для генерации изображения.\nНапример: <b>Белый сиамский кот</b>\n\n<i>Генерация одного изображения стоит <b>{image_cost}</b> токенов</i>',
+    reply_markup=keyboard,
+    parse_mode='html'
   )
 
 @dp.callback_query_handler(text='cancel_generate_image')
