@@ -7,3 +7,5 @@ start_words = [
   'помощь',
   'помоги',
 ]
+
+image_cost = 5

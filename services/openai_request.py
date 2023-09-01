@@ -8,7 +8,7 @@ openai.organization = OPENAI_ORGANIZATION
 openai.api_key = OPENAI_API_KEY
 
 class OpenAIRequest:
-  def lets_talk(self, user_id: int, text: str):
+  def lets_talk(self, user_id: int, text: str) -> str:
     if not text:
       return
 
@@ -31,6 +31,17 @@ class OpenAIRequest:
     db_service.set_obj_by_id(CONTEXTS_DB_KEY, user_id, context)
 
     return answer
+
+  def generate_image(self, prompt: str) -> str:
+    if not prompt:
+      return ''
+
+    response = openai.Image.create(
+      prompt=prompt,
+      n=1,
+      size='1024x1024'
+    )
+    return response['data'][0]['url']
 
   def reset_context(self, user_id: int):
     db_service.set_obj_by_id(CONTEXTS_DB_KEY, user_id, [])

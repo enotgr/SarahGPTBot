@@ -12,3 +12,4 @@ sarah_gpt_bot.service
 /consts/database_url.py
 venv
 qr_temp.jpg
+.cache

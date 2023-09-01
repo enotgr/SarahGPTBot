@@ -4,12 +4,15 @@ from services.openai_request import openai_request
 from utils.handler_utils import send
 from consts.db_keys import USERS_DB_KEY
 from consts.admins import admins
-from consts.common import start_words
+from consts.common import start_words, image_cost
 from aiogram.utils.deep_linking import get_start_link
 from aiogram.utils.exceptions import BotBlocked
-from aiogram.types import Update
+from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 import qrcode
 import time
+import httplib2
+
+image_requesters: list[int] = []
 
 @dp.message_handler(commands=['start'])
 async def send_welcome(message):
@@ -39,6 +42,7 @@ async def send_welcome(message):
 async def ref(message):
   link = await get_start_link(message.from_user.id)
   img = qrcode.make(link)
+  # TODO: придумать как не сохранять временно изображение
   img.save('qr_temp.jpg')
   await send(message, f'Реферальная ссылка:\n{link}')
   await bot.send_photo(message.chat.id, photo=open('qr_temp.jpg', 'rb'))
@@ -68,6 +72,36 @@ async def bot_blocked_handler(update: Update, exception: BotBlocked):
   print('exception:', exception)
   return True
 
+@dp.message_handler(commands=['image'])
+async def request_image(message):
+  if message.from_user.id in image_requesters:
+    await send(message, 'Введите запрос.\nНапример: <i>Белый сиамский кот</i>')
+    return
+  image_requesters.append(message.from_user.id)
+  keyboard = InlineKeyboardMarkup()
+  keyboard.add(InlineKeyboardButton(
+    text='Отменить',
+    callback_data='cancel_generate_image')
+  )
+  await message.answer(
+    f'Введите запрос для генерации изображения или нажмите кнопку для отмены.\nГенерация одного изображения стоит {image_cost} токенов',
+    reply_markup=keyboard
+  )
+
+@dp.callback_query_handler(text='cancel_generate_image')
+async def cancel_generate_image(callback: CallbackQuery):
+  await callback.message.delete()
+  user_id = callback.message.chat.id
+  if user_id in image_requesters:
+    image_requesters.remove(user_id)
+
+async def send_image(message):
+  await bot.send_chat_action(message.from_user.id, 'upload_photo')
+  image_url = openai_request.generate_image(message.text)
+  h = httplib2.Http('.cache')
+  _, content = h.request(image_url)
+  await bot.send_photo(message.from_user.id, content)
+
 @dp.message_handler()
 async def user_messages(message):
   if is_some_words_in_text(start_words, message.text):
@@ -77,8 +111,21 @@ async def user_messages(message):
   user = db_service.get_obj_by_id(USERS_DB_KEY, message.from_user.id)
   tokens_count = user['tokens']
 
+  if message.from_user.id in image_requesters:
+    image_requesters.remove(message.from_user.id)
+    if tokens_count < image_cost:
+      await send(message, f'У вас не достаточно токенов.\nГенерация одного изображения стоит {image_cost} токенов\n\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
+      return
+    if not message.text:
+      print('Error: Text cannot be empty')
+      return
+    await send_image(message)
+    user['tokens'] = tokens_count - image_cost
+    db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
+    return
+
   if tokens_count <= 0:
-    await send(message, 'У вас закончились токены.\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
+    await send(message, 'У вас закончились токены.\n\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
     return
 
   await bot.send_chat_action(message.from_user.id, 'typing')
