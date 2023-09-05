@@ -23,11 +23,9 @@ async def buy_15000_tokens(callback: types.CallbackQuery):
 
 @dp.message_handler(commands=['buy'])
 async def donate(message: types.Message):
-  if message.from_user.id not in admins:
-    await bot.send_message(message.from_user.id, 'В ближайшее время покупка токенов будет доступна, но не сейчас ;(')
-    return
-
-  # TODO: enable donations
+  # if message.from_user.id not in admins:
+  #   await bot.send_message(message.from_user.id, 'В ближайшее время покупка токенов будет доступна, но не сейчас ;(')
+  #   return
 
   keyboard = create_keyboard()
   await message.answer(
