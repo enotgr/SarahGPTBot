@@ -88,7 +88,7 @@ async def pre_checkout_query(pre_checkout_q: types.PreCheckoutQuery):
 @dp.message_handler(content_types=ContentType.SUCCESSFUL_PAYMENT)
 async def successful_payment(message: types.Message):
   purchased_tokens = tokens_by_cost[message.successful_payment.total_amount]
-  user_id = user_id
+  user_id = message.from_user.id
   user = db_service.get_obj_by_id(USERS_DB_KEY, user_id)
   user['tokens'] = user['tokens'] + purchased_tokens
   db_service.set_obj_by_id(USERS_DB_KEY, user_id, user)
