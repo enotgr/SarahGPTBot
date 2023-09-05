@@ -8,11 +8,6 @@ from aiogram.types.message import ContentType
 from typing import Any
 import time
 
-@dp.callback_query_handler(text='50tokens')
-async def buy_50_tokens(callback: types.CallbackQuery):
-  await callback.message.delete()
-  await send_invoice(callback.message.chat.id, 50)
-
 @dp.callback_query_handler(text='110tokens')
 async def buy_110_tokens(callback: types.CallbackQuery):
   await callback.message.delete()
@@ -47,10 +42,6 @@ async def donate(message: types.Message):
 
 def create_keyboard():
   keyboard = types.InlineKeyboardMarkup()
-  keyboard.add(types.InlineKeyboardButton(
-    text='50 токенов [50 RUB]',
-    callback_data='50tokens')
-  )
   keyboard.add(types.InlineKeyboardButton(
     text='110 токенов [100 RUB]',
     callback_data='110tokens')
