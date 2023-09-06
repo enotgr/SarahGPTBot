@@ -96,12 +96,15 @@ async def cancel_generate_image(callback: CallbackQuery):
   if user_id in image_requesters:
     image_requesters.remove(user_id)
 
-async def send_image(message):
+async def send_image(message) -> bool:
   await bot.send_chat_action(message.from_user.id, 'upload_photo')
   image_url = openai_request.generate_image(message.text)
+  if not image_url:
+    return False
   h = httplib2.Http('.cache')
   _, content = h.request(image_url)
   await bot.send_photo(message.from_user.id, content)
+  return True
 
 @dp.message_handler()
 async def user_messages(message):
@@ -120,7 +123,10 @@ async def user_messages(message):
     if not message.text:
       print('Error: Text cannot be empty')
       return
-    await send_image(message)
+    is_succeed = await send_image(message)
+    if not is_succeed:
+      await send(message, 'Упс! Что-то пошло не так...\n\nВаш запрос был отклонен.\nВозможно ваш запрос содержит текст, не разрешенный системой безопасности OpenAI.\nПопробуйте изменить текст запроса и повторить.')
+      return
     user['tokens'] = tokens_count - image_cost
     db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
     return

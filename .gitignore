@@ -13,3 +13,4 @@ sarah_gpt_bot.service
 venv
 qr_temp.jpg
 .cache
+test.py

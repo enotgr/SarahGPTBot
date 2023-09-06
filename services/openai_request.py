@@ -32,16 +32,22 @@ class OpenAIRequest:
 
     return answer
 
-  def generate_image(self, prompt: str) -> str:
+  def generate_image(self, prompt: str) -> str or None:
     if not prompt:
-      return ''
+      return None
 
-    response = openai.Image.create(
-      prompt=prompt,
-      n=1,
-      size='1024x1024'
-    )
-    return response['data'][0]['url']
+    image_url = None
+
+    try:
+      response = openai.Image.create(
+        prompt=prompt,
+        n=1,
+        size='1024x1024'
+      )
+      image_url = response['data'][0]['url']
+    except:
+      print('Error: Invalid request')
+    return image_url
 
   def reset_context(self, user_id: int):
     db_service.set_obj_by_id(CONTEXTS_DB_KEY, user_id, [])
