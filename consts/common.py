@@ -4,8 +4,6 @@ start_words = [
   'run',
   'здравствуй',
   'help',
-  'помощь',
-  'помоги',
 ]
 
 image_cost = 5
