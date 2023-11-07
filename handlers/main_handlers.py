@@ -115,7 +115,7 @@ async def send_admin_public_message(text: str):
     try:
       await send(id, text)
     except:
-      await send(admins[0], f'Пользователь {users["username"]} (id: {id}) заблокировал бота и больше недоступен.')
+      await send(admins[0], f'Пользователь {users[id]["username"]} (id: {id}) заблокировал бота и больше недоступен.')
 
 async def send_image(message) -> bool:
   await bot.send_chat_action(message.from_user.id, 'upload_photo')
