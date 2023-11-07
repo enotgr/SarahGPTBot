@@ -6,4 +6,4 @@ start_words = [
   'help',
 ]
 
-image_cost = 5
+image_cost = 10
