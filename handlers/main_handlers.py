@@ -125,7 +125,7 @@ async def user_messages(message):
       return
     is_succeed = await send_image(message)
     if not is_succeed:
-      await send(message, 'Упс! Что-то пошло не так...\n\nВаш запрос был отклонен.\nВозможно ваш запрос содержит текст, не разрешенный системой безопасности OpenAI.\nПопробуйте изменить текст запроса и повторить.')
+      await send(message, 'Упс! Что-то пошло не так...\n\nВаш запрос был отклонен.\nВозможно ваш запрос содержит текст, не разрешенный системой безопасности OpenAI.\nПопробуйте изменить текст запроса или написать запрос на английском языке и повторить.')
       return
     user['tokens'] = tokens_count - image_cost
     db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
