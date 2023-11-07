@@ -13,6 +13,7 @@ import time
 import httplib2
 
 image_requesters: list[int] = []
+public_admin_message_mode = False
 
 @dp.message_handler(commands=['start'])
 async def send_welcome(message):
@@ -60,6 +61,17 @@ async def get_users_count_admin(message):
   users_count = len(db_service.get_db(USERS_DB_KEY).keys())
   await send(message, f'Количество пользователей: <b>{users_count}</b>')
 
+@dp.message_handler(commands=['public'])
+async def activate_public_message_mode(message):
+  if message.from_user.id not in admins:
+    return
+  if public_admin_message_mode:
+    public_admin_message_mode = False
+    await send(message, '<b>Публичные сообщения деактивированы.</b>')
+  else:
+    public_admin_message_mode = True
+    await send(message, '<b>Публичные сообщения активированы.</b>')
+
 @dp.message_handler(commands=['reset'])
 async def reset_context(message):
   openai_request.reset_context(message.from_user.id)
@@ -96,6 +108,14 @@ async def cancel_generate_image(callback: CallbackQuery):
   if user_id in image_requesters:
     image_requesters.remove(user_id)
 
+async def send_admin_public_message(text: str):
+  users = db_service.get_db(USERS_DB_KEY)
+  for id in users.keys():
+    try:
+      await send(id, text)
+    except:
+      await send(admins[0], f'Пользователь {users["username"]} (id: {id}) заблокировал бота и больше недоступен.')
+
 async def send_image(message) -> bool:
   await bot.send_chat_action(message.from_user.id, 'upload_photo')
   image_url = openai_request.generate_image(message.text)
@@ -108,6 +128,10 @@ async def send_image(message) -> bool:
 
 @dp.message_handler()
 async def user_messages(message):
+  if message.from_user.id == admins[0] and public_admin_message_mode:
+    await send_admin_public_message(message.text)
+    return
+
   if is_some_words_in_text(start_words, message.text):
     await send_welcome(message)
     return
