@@ -113,9 +113,9 @@ async def send_admin_public_message(text: str):
   users = db_service.get_db(USERS_DB_KEY)
   for id in users.keys():
     try:
-      await send(id, text)
+      await bot.send_message(id, text)
     except:
-      await send(admins[0], f'Пользователь (id: {id}) заблокировал бота и больше недоступен.')
+      await bot.send_message(admins[0], f'Пользователь {users[id]["username"]} (id: {id}) заблокировал бота и больше недоступен.')
 
 async def send_image(message) -> bool:
   await bot.send_chat_action(message.from_user.id, 'upload_photo')
