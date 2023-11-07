@@ -13,7 +13,7 @@ import time
 import httplib2
 
 image_requesters: list[int] = []
-public_admin_message_mode = False
+public_admin_message_mode: bool = False
 
 @dp.message_handler(commands=['start'])
 async def send_welcome(message):
@@ -63,6 +63,7 @@ async def get_users_count_admin(message):
 
 @dp.message_handler(commands=['public'])
 async def activate_public_message_mode(message):
+  global public_admin_message_mode
   if message.from_user.id not in admins:
     return
   if public_admin_message_mode:
