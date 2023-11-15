@@ -4,7 +4,7 @@ from services.openai_request import openai_request
 from utils.handler_utils import send
 from consts.db_keys import USERS_DB_KEY
 from consts.admins import admins
-from consts.common import start_words, image_cost, text_request_cost
+from consts.common import start_words, image_cost, gpt_models_map
 from aiogram.utils.deep_linking import get_start_link
 from aiogram.utils.exceptions import BotBlocked
 from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -54,36 +54,24 @@ async def tokens(message):
   user = db_service.get_obj_by_id(USERS_DB_KEY, message.from_user.id)
   await send(message, 'Кошелек:\n{0}'.format(get_tokens_text(user['tokens'])))
 
-@dp.message_handler(commands=['users'])
-async def get_users_count_admin(message):
-  if message.from_user.id not in admins:
-    return
-  users_count = len(db_service.get_db(USERS_DB_KEY).keys())
-  await send(message, f'Количество пользователей: <b>{users_count}</b>')
-
-@dp.message_handler(commands=['public'])
-async def activate_public_message_mode(message):
-  global public_admin_message_mode
-  if message.from_user.id not in admins:
-    return
-  if public_admin_message_mode:
-    public_admin_message_mode = False
-    await send(message, '<b>Публичные сообщения деактивированы.</b>')
-  else:
-    public_admin_message_mode = True
-    await send(message, '<b>Публичные сообщения активированы.</b>')
-
 @dp.message_handler(commands=['reset'])
 async def reset_context(message):
   openai_request.reset_context(message.from_user.id)
   await send(message, 'Контекст очищен.')
 
-@dp.errors_handler(exception=BotBlocked)
-async def bot_blocked_handler(update: Update, exception: BotBlocked):
-  print('EXCEPTION: Bot was blocked by user')
-  print('update:', update)
-  print('exception:', exception)
-  return True
+@dp.message_handler(commands=['gpt3'])
+async def choose_gpt3(message):
+  user = db_service.get_obj_by_id(USERS_DB_KEY, message.from_user.id)
+  user['model'] = 'gpt3'
+  db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
+  await send(message, 'Выбрана модель gpt3-turbo. Стоимость одного текстового запроса к этой модели - 1 токен')
+
+@dp.message_handler(commands=['gpt4'])
+async def choose_gpt4(message):
+  user = db_service.get_obj_by_id(USERS_DB_KEY, message.from_user.id)
+  user['model'] = 'gpt4'
+  db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
+  await send(message, 'Выбрана модель gpt4-turbo. Стоимость одного текстового запроса к этой модели - 12 токенов')
 
 @dp.message_handler(commands=['image'])
 async def request_image(message):
@@ -108,6 +96,32 @@ async def cancel_generate_image(callback: CallbackQuery):
   user_id = callback.message.chat.id
   if user_id in image_requesters:
     image_requesters.remove(user_id)
+
+@dp.message_handler(commands=['users'])
+async def get_users_count_admin(message):
+  if message.from_user.id not in admins:
+    return
+  users_count = len(db_service.get_db(USERS_DB_KEY).keys())
+  await send(message, f'Количество пользователей: <b>{users_count}</b>')
+
+@dp.message_handler(commands=['public'])
+async def activate_public_message_mode(message):
+  global public_admin_message_mode
+  if message.from_user.id not in admins:
+    return
+  if public_admin_message_mode:
+    public_admin_message_mode = False
+    await send(message, '<b>Публичные сообщения деактивированы.</b>')
+  else:
+    public_admin_message_mode = True
+    await send(message, '<b>Публичные сообщения активированы.</b>')
+
+@dp.errors_handler(exception=BotBlocked)
+async def bot_blocked_handler(update: Update, exception: BotBlocked):
+  print('EXCEPTION: Bot was blocked by user')
+  print('update:', update)
+  print('exception:', exception)
+  return True
 
 async def send_admin_public_message(text: str):
   users = db_service.get_db(USERS_DB_KEY)
@@ -156,20 +170,23 @@ async def user_messages(message):
     db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
     return
 
-  if tokens_count < text_request_cost:
-    await send(message, f'У вас не достаточно токенов.\nТекстовый запрос к SarahGPT стоит {text_request_cost} токенов\n\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
+  current_model: str = get_user_model(user, message.from_user.id)
+  request_cost: int = gpt_models_map[current_model]['cost']
+
+  if tokens_count < request_cost:
+    await send(message, f'У вас не достаточно токенов.\nТекстовый запрос к SarahGPT стоит {get_tokens_text(request_cost)}\n\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
     return
 
   await bot.send_chat_action(message.from_user.id, 'typing')
 
   try:
-    answer: str = openai_request.lets_talk(message.from_user.id, message.text)
+    answer: str = openai_request.lets_talk(message.from_user.id, message.text, current_model)
     await bot.send_message(message.from_user.id, answer)
   except:
     await bot.send_message(message.from_user.id, 'Превышен лимит контекста. Пожалуйста, очистите контекст\n\n/reset - Очистить контекст')
     return
 
-  user['tokens'] = tokens_count - text_request_cost
+  user['tokens'] = tokens_count - request_cost
   db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
 
 async def add_referal_tokens(unique_code, name):
@@ -221,3 +238,12 @@ def define_suffix(value, suffixes):
 
 def get_tokens_text(tokens):
   return f'{tokens} {define_suffix(tokens, ["токен", "токена", "токенов"])}'
+
+def get_user_model(user, user_id: int) -> str:
+  user_model: str = 'gpt3'
+  try:
+    user_model = user['model']
+  except:
+    user['model'] = user_model
+    db_service.set_obj_by_id(USERS_DB_KEY, user_id, user)
+  return user_model

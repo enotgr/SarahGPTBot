@@ -2,23 +2,25 @@ import openai
 from services.db_service import db_service
 from consts.access_keys import OPENAI_ORGANIZATION, OPENAI_API_KEY
 from consts.db_keys import CONTEXTS_DB_KEY
+from consts.common import gpt_models_map
 
 # Use your organization and API keys
 openai.organization = OPENAI_ORGANIZATION
 openai.api_key = OPENAI_API_KEY
 
 class OpenAIRequest:
-  def lets_talk(self, user_id: int, text: str) -> str:
+  def lets_talk(self, user_id: int, text: str, current_model: str = 'gpt3') -> str:
     if not text:
       return
+
+    model: str = gpt_models_map[current_model]['name']
 
     context: list[dict] = db_service.get_obj_by_id(CONTEXTS_DB_KEY, user_id) or []
 
     context.append({ 'role': 'user', 'content': text })
 
-    # TODO: implement 'gpt-4-1106-preview'
     response = openai.ChatCompletion.create(
-      model='gpt-3.5-turbo',
+      model=model,
       messages=context,
       temperature=0.9,
       max_tokens=256,
