@@ -16,11 +16,12 @@ class OpenAIRequest:
 
     context.append({ 'role': 'user', 'content': text })
 
+    # TODO: implement 'gpt-4-1106-preview'
     response = openai.ChatCompletion.create(
-      model='gpt-4-1106-preview',
+      model='gpt-3.5-turbo',
       messages=context,
       temperature=0.9,
-      max_tokens=1024,
+      max_tokens=256,
       top_p=1,
       frequency_penalty=0.0,
       presence_penalty=0.6,

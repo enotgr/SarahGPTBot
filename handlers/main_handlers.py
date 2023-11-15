@@ -4,7 +4,7 @@ from services.openai_request import openai_request
 from utils.handler_utils import send
 from consts.db_keys import USERS_DB_KEY
 from consts.admins import admins
-from consts.common import start_words, image_cost
+from consts.common import start_words, image_cost, text_request_cost
 from aiogram.utils.deep_linking import get_start_link
 from aiogram.utils.exceptions import BotBlocked
 from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -156,15 +156,20 @@ async def user_messages(message):
     db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
     return
 
-  if tokens_count <= 0:
-    await send(message, 'У вас закончились токены.\n\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
+  if tokens_count < text_request_cost:
+    await send(message, f'У вас не достаточно токенов.\nТекстовый запрос к SarahGPT стоит {text_request_cost} токенов\n\n/buy - Купить токены\n/ref - Пригласите друга и получите 15 токенов')
     return
 
   await bot.send_chat_action(message.from_user.id, 'typing')
 
-  answer: str = openai_request.lets_talk(message.from_user.id, message.text)
-  await bot.send_message(message.from_user.id, answer)
-  user['tokens'] = tokens_count - 1
+  try:
+    answer: str = openai_request.lets_talk(message.from_user.id, message.text)
+    await bot.send_message(message.from_user.id, answer)
+  except:
+    await bot.send_message(message.from_user.id, 'Превышен лимит контекста. Пожалуйста, очистите контекст\n\n/reset - Очистить контекст')
+    return
+
+  user['tokens'] = tokens_count - text_request_cost
   db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
 
 async def add_referal_tokens(unique_code, name):

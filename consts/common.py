@@ -6,4 +6,5 @@ start_words = [
   'help',
 ]
 
+text_request_cost = 1
 image_cost = 10
