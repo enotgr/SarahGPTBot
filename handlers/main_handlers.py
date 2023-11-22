@@ -64,14 +64,14 @@ async def choose_gpt3(message):
   user = db_service.get_obj_by_id(USERS_DB_KEY, message.from_user.id)
   user['model'] = 'gpt3'
   db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
-  await send(message, 'Выбрана модель gpt3-turbo. Стоимость одного текстового запроса к этой модели - 1 токен')
+  await send(message, 'Выбрана модель gpt-3.5-turbo. Стоимость одного текстового запроса к этой модели - 1 токен')
 
 @dp.message_handler(commands=['gpt4'])
 async def choose_gpt4(message):
   user = db_service.get_obj_by_id(USERS_DB_KEY, message.from_user.id)
   user['model'] = 'gpt4'
   db_service.set_obj_by_id(USERS_DB_KEY, message.from_user.id, user)
-  await send(message, 'Выбрана модель gpt4-turbo. Стоимость одного текстового запроса к этой модели - 12 токенов')
+  await send(message, 'Выбрана модель gpt-4-turbo. Стоимость одного текстового запроса к этой модели - 12 токенов')
 
 @dp.message_handler(commands=['image'])
 async def request_image(message):
