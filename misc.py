@@ -10,7 +10,7 @@ async def set_menu():
     types.BotCommand('/ref', 'Пригласить друга'),
     types.BotCommand('/buy', 'Купить токены'),
     types.BotCommand('/image', 'Сгенерировать изображение'),
-    types.BotCommand('/gpt4', 'Выбрать gpt4-turbo'),
-    types.BotCommand('/gpt3', 'Выбрать gpt3-turbo'),
+    types.BotCommand('/gpt4', 'Выбрать gpt-4-turbo'),
+    types.BotCommand('/gpt3', 'Выбрать gpt-3.5-turbo'),
     types.BotCommand('/reset', 'Очистить контекст'),
   ])
