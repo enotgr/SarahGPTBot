@@ -8,6 +8,7 @@ from consts.common import start_words, image_cost, gpt_models_map
 from aiogram.utils.deep_linking import get_start_link
 from aiogram.utils.exceptions import BotBlocked
 from aiogram.types import Update, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from io import BytesIO
 import qrcode
 import time
 import httplib2
@@ -42,11 +43,25 @@ async def send_welcome(message):
 @dp.message_handler(commands=['ref', 'qrcode', 'qr', 'ref_link'])
 async def ref(message):
   link = await get_start_link(message.from_user.id)
-  img = qrcode.make(link)
-  # TODO: придумать как не сохранять временно изображение
-  img.save('qr_temp.jpg')
+
+  qr = qrcode.QRCode(
+    version=1,
+    error_correction=qrcode.constants.ERROR_CORRECT_L,
+    box_size=12,
+    border=4,
+  )
+
+  qr.add_data(link)
+  qr.make(fit=True)
+
+  img = qr.make_image(fill_color="#fefefe", back_color="#028374")
+
+  byte_io = BytesIO()
+  img.save(byte_io, 'PNG')
+  byte_io.seek(0)
+
   await send(message, f'Реферальная ссылка:\n{link}')
-  await bot.send_photo(message.chat.id, photo=open('qr_temp.jpg', 'rb'))
+  await bot.send_photo(message.chat.id, photo=byte_io)
   await send(message, 'Просто отправьте ссылку другу или покажите ему qrcode!\nЗа каждого приведённого друга вы получите 15 токенов!')
 
 @dp.message_handler(commands=['tokens'])
