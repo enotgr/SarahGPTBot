@@ -162,7 +162,7 @@ async def user_messages(message):
     await send_admin_public_message(message.text)
     return
 
-  if is_some_words_in_text(start_words, message.text):
+  if is_command_text(start_words, message.text):
     await send_welcome(message)
     return
 
@@ -231,9 +231,9 @@ def add_user_to_db(id, username):
 def extract_unique_code(text):
   return text.split()[1] if len(text.split()) > 1 else None
 
-def is_some_words_in_text(words, text):
-  for word in words:
-    if word in text.lower():
+def is_command_text(command_words: list[str], text: str) -> bool:
+  for word in command_words:
+    if word == text.lower():
       return True
   return False
 
