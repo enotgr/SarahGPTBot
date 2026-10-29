@@ -3,3 +3,5 @@ openai==2.54.0
 firebase-admin==7.7.0
 python-dotenv==1.2.4
 qrcode[pil]==8.2
+# Server Python was built without the standard _sqlite3 extension.
+pysqlite3-binary==0.5.4.post2; sys_platform == "linux"

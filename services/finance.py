@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import os
-import sqlite3
 import threading
 import time
 from contextlib import contextmanager
@@ -12,6 +11,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import config
+
+try:
+    import sqlite3
+except ModuleNotFoundError as exc:
+    if exc.name not in ("sqlite3", "_sqlite3"):
+        raise
+    import pysqlite3 as sqlite3
 
 
 class BudgetExceeded(Exception):
