@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import suppress
 
 from aiogram import F
 from aiogram.exceptions import TelegramForbiddenError
@@ -10,6 +11,8 @@ from handlers import main_handlers, payments
 from misc import bot, dp, set_menu
 from services.chat_service import chat_service
 from services.db_service import db_service
+from services.finance import finance
+from services.payment_reconciliation import check_payments, watch_payments
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +37,12 @@ async def main():
     config.validate()
     dp.include_router(payments.router)
     dp.include_router(main_handlers.router)
+    await finance.recover()
     recovered = await db_service.recover_requests()
     logger.info("Startup: recovered %s unfinished reservations", recovered)
+    await finance.payments_ready(False)
+    synced = await check_payments(bot)
+    payments_task = asyncio.create_task(watch_payments(bot, synced))
     try:
         await set_menu()
         # Keep queued messages and payment notifications; never drop pending updates.
@@ -47,6 +54,9 @@ async def main():
             close_bot_session=False,
         )
     finally:
+        payments_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await payments_task
         await main_handlers.close_background_tasks()
         await chat_service.close()
         await bot.session.close()

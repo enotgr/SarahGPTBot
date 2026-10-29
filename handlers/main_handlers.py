@@ -21,6 +21,7 @@ from consts.common import HELP_TEXT, MODELS, get_model, model_key
 from services.chat_service import chat_service
 from services.context import clean_context
 from services.db_service import db_service
+from services.finance import finance
 
 router = Router(name="main")
 logger = logging.getLogger(__name__)
@@ -47,12 +48,7 @@ def answer_keyboard():
 async def ensure_user(message, referral=None):
     person = message.from_user
     user = await db_service.ensure_user(person.id, person.username or person.first_name, referral)
-    # Idempotent referral credit can recover if the process stopped after account creation.
-    referrer = user.get("referred_by")
-    if referrer and str(person.id) != str(referrer):
-        target = await db_service.get_obj_by_id("users", referrer)
-        if target:
-            await db_service.credit(referrer, "_referrals", str(person.id), config.REFERRAL_TOKENS)
+    await db_service.award_referral(person.id)
     return user
 
 
@@ -63,11 +59,18 @@ async def send_welcome(message: Message):
     if referral == str(message.from_user.id):
         referral = None
     user = await ensure_user(message, referral)
+    bonus_note = (
+        "\nНовые бонусные токены действуют для Luna: до 5 бесплатных запросов в день."
+        if user.get("promo_tokens")
+        else ""
+    )
+    if user.get("_welcome_bonus_pending") and user["tokens"] == 0:
+        bonus_note = "\nЛимит акции пока исчерпан. Приветственный бонус ожидает следующего периода; /buy — пополнить баланс."
     await message.answer(
         f"Привет, {message.from_user.first_name or 'друг'}! Я Sarah.\n"
         f"Напишите вопрос или пришлите фото с подписью.\n\n"
         f"Модель: {get_model(user.get('model')).title}\n"
-        f"Баланс: {user['tokens']} токенов\n\n/help — все возможности",
+        f"Баланс: {user['tokens']} токенов{bonus_note}\n\n/help — все возможности",
         reply_markup=keyboard([[("Выбрать модель", "menu:models"), ("Баланс", "menu:tokens")]]),
     )
 
@@ -81,9 +84,10 @@ async def show_balance(message, user):
     model = get_model(user.get("model"))
     await message.answer(
         f"Баланс: {user['tokens']} токенов\n"
+        f"Из них бонусных для Luna: {min(max(0, user['tokens']), user.get('promo_tokens', 0))}\n"
         f"{model.title}\nСтоимость ответа: {model.cost} токенов\n"
         f"Примерно {max(0, user['tokens']) // model.cost} ответов в этом режиме.\n\n"
-        "/ref — пригласить друга (+15)\n/buy — пополнить баланс"
+        "/ref — бонус после первой покупки друга\n/buy — пополнить баланс"
     )
 
 
@@ -252,7 +256,8 @@ async def ref(message: Message):
     await asyncio.to_thread(qrcode.make(link).save, buffer, "PNG")
     await message.answer_photo(
         BufferedInputFile(buffer.getvalue(), filename="invite.png"),
-        caption=f"Пригласите друга: {link}\nЗа нового пользователя по вашей ссылке — 15 токенов.",
+        caption=f"Пригласите друга: {link}\nПосле первой покупки друга — 15 бонусных токенов для Luna. "
+        "Бонусы выдаются в пределах дневного и месячного лимита акции.",
     )
 
 
@@ -291,7 +296,8 @@ async def support(message: Message):
         "Для помощи с оплатой и работой бота свяжитесь с " + contact + ".\n"
         f"Ваш ID: {message.from_user.id}\n"
         "Токены бота расходуются по тарифу выбранной модели. "
-        "При ошибке или отмене запроса списание возвращается. "
+        "До отправки запроса OpenAI отмена бесплатна. После отправки стоимость запроса списывается, "
+        "в том числе при остановке. Если API отклонил запрос до обработки, токены возвращаются. "
         "Ответы ИИ могут содержать неточности. "
         "Условия покупки и возврата уточняйте у владельца перед оплатой.",
         reply_markup=markup,
@@ -303,6 +309,21 @@ async def users(message: Message):
     if message.from_user.id in config.ADMIN_IDS:
         data = await db_service.get_db("users") or {}
         await message.answer(f"Пользователей: {len(data)}")
+
+
+@router.message(Command("finance"))
+async def finance_report(message: Message):
+    if message.from_user.id not in config.ADMIN_IDS:
+        return
+    data = await finance.report()
+    await message.answer(
+        f"Расход API за {data['month']}: ${data['cost_micro'] / 1000000:.4f}\n"
+        f"Лимит в месяц: ${data['monthly_limit_micro'] / 1000000:.2f}\n"
+        f"Лимит в день: ${data['daily_limit_micro'] / 1000000:.2f}\n"
+        f"Запросов: {data['requests']}, активных резервов: {data['pending']}\n"
+        "При неизвестном usage учитывается максимальный резерв запроса. "
+        "Учёт начинается с установки финансовой защиты."
+    )
 
 
 @router.message(Command("public"))

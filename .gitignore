@@ -27,3 +27,4 @@ backups/
 !deploy/sarah_gpt_bot.service
 .upgrade/
 *.swp
+data/

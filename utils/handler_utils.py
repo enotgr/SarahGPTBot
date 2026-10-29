@@ -32,7 +32,9 @@ class StreamingMessage:
         self.last_preview = ""
 
     async def start(self):
-        self.preview = await self.message.answer("Думаю…  /stop — остановить")
+        self.preview = await self.message.answer(
+            "Думаю… /stop — остановить. После отправки запроса OpenAI его стоимость списывается."
+        )
 
     async def append(self, delta):
         self.text += delta

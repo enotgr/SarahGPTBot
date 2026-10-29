@@ -3,6 +3,7 @@
 import importlib
 import json
 import os
+from decimal import Decimal
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,6 +44,19 @@ NEW_USER_TOKENS = 25
 REFERRAL_TOKENS = 15
 IMAGE_COST = 10
 IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-flare")
+MAX_INPUT_TOKENS = 8192
+FINANCE_DB_PATH = Path(os.getenv("FINANCE_DB_PATH", str(BASE_DIR / "data/finance.sqlite3")))
+MONTHLY_API_BUDGET_MICRO = int(Decimal(os.getenv("MONTHLY_API_BUDGET_USD", "20")) * 1000000)
+DAILY_API_BUDGET_MICRO = int(Decimal(os.getenv("DAILY_API_BUDGET_USD", "2")) * 1000000)
+PROMO_MONTHLY_BUDGET_MICRO = int(Decimal(os.getenv("PROMO_MONTHLY_BUDGET_USD", "1")) * 1000000)
+PROMO_DAILY_CREDITS = 250
+PROMO_MONTHLY_CREDITS = 2500
+USER_DAILY_REQUESTS = 100
+PROMO_DAILY_REQUESTS = 5
+REQUEST_COOLDOWN_SECONDS = 2
+PERSONAL_USER_IDS = {int(item) for item in os.getenv("PERSONAL_USER_IDS", "").split(",") if item.strip()}
+if min(MONTHLY_API_BUDGET_MICRO, DAILY_API_BUDGET_MICRO, PROMO_MONTHLY_BUDGET_MICRO) < 0:
+    raise ValueError("API budgets cannot be negative")
 # Explicit operator pricing. Never infer a RUB/Stars exchange rate.
 STARS_PACKAGES = {int(k): int(v) for k, v in json.loads(os.getenv("STARS_PACKAGES", "{}")).items()}
 if any(k <= 0 or v <= 0 for k, v in STARS_PACKAGES.items()):

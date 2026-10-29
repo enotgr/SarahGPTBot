@@ -11,6 +11,7 @@ import config  # noqa: E402
 from consts.common import MODELS  # noqa: E402
 from services.db_service import db_service  # noqa: E402
 from services.openai_request import OpenAIRequest  # noqa: E402
+from services.pricing import image_cost, text_cost  # noqa: E402
 
 
 async def check(with_image=False):
@@ -32,15 +33,28 @@ async def check(with_image=False):
             flush=True,
         )
         for key, model in MODELS.items():
-            parts = [delta async for delta in api.stream_answer([], "Reply with exactly OK.", key, "brief")]
+            audit = {}
+            parts = [
+                delta
+                async for delta in api.stream_answer([], "Reply with exactly OK.", key, "brief", audit=audit)
+            ]
             if not "".join(parts).strip():
                 raise RuntimeError(f"{model.id}: empty answer")
-            print(f"{model.id}: streamed answer OK", flush=True)
+            cost = text_cost(audit.get("usage"), model.id)
+            if cost is None:
+                raise RuntimeError("Text usage was not captured")
+            print(f"{model.id}: streamed answer OK, cost_micro_usd={cost}", flush=True)
         if with_image:
-            image = await api.generate_image("A simple blue circle on a white background, no text.", 0)
+            audit = {}
+            image = await api.generate_image(
+                "A simple blue circle on a white background, no text.", 0, audit=audit
+            )
             if not image.startswith(b"\x89PNG"):
                 raise RuntimeError("Image response is not a PNG")
-            print(f"{config.IMAGE_MODEL}: PNG OK, bytes={len(image)}", flush=True)
+            print(
+                f"{config.IMAGE_MODEL}: PNG OK, bytes={len(image)}, cost_micro_usd={image_cost(audit.get('usage'))}",
+                flush=True,
+            )
         print(f"Stars packages configured: {len(config.STARS_PACKAGES)}", flush=True)
     finally:
         await api.close()

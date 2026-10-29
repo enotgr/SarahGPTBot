@@ -6,7 +6,8 @@ import pytest
 
 import services.chat_service as module
 from services.chat_service import ChatService
-from services.wallet import finish_request, reserve_request
+from services.finance import Finance
+from services.wallet import finish_request, reserve_request, start_request
 
 
 class FakeDB:
@@ -20,8 +21,12 @@ class FakeDB:
     async def set_obj_by_id(self, name, user_id, value):
         self.contexts[user_id] = value
 
-    async def reserve(self, user_id, request_id, cost):
-        self.users[user_id] = reserve_request(self.users[user_id], request_id, cost)
+    async def reserve(self, user_id, request_id, cost, allow_promo=True):
+        self.users[user_id] = reserve_request(self.users[user_id], request_id, cost, allow_promo)
+        return self.users[user_id]
+
+    async def start_request(self, user_id, request_id):
+        self.users[user_id] = start_request(self.users[user_id], request_id)
 
     async def finish(self, user_id, request_id, success):
         self.users[user_id] = finish_request(self.users[user_id], request_id, success)
@@ -42,10 +47,28 @@ def message(user_id=1, message_id=5):
 
 
 @pytest.fixture
-def db(monkeypatch):
+def db(monkeypatch, tmp_path):
     fake = FakeDB()
     monkeypatch.setattr(module, "db_service", fake)
+    ledger = Finance(tmp_path / "finance.sqlite3")
+    ledger._payments_ready(True)
+    monkeypatch.setattr(module, "finance", ledger)
+    monkeypatch.setattr(module.config, "REQUEST_COOLDOWN_SECONDS", 0)
     return fake
+
+
+class FakeAPI:
+    def __init__(self, stream):
+        self.stream = stream
+
+    async def prepare(self, context, *args):
+        return {"context": context, "input_tokens": 100}
+
+    async def stream_answer(self, *args, audit, prepared):
+        audit["dispatched"] = True
+        async for delta in self.stream(*args):
+            yield delta
+        audit["usage"] = {"input_tokens": 100, "output_tokens": 10}
 
 
 @pytest.mark.asyncio
@@ -54,7 +77,7 @@ async def test_success_charges_once_and_records_context(db):
         yield "answer <valid text>"
 
     service = ChatService()
-    service.api = SimpleNamespace(stream_answer=stream)
+    service.api = FakeAPI(stream)
     msg = message()
     assert service.begin(msg, db.users[1])
     await service.active[1]
@@ -66,16 +89,16 @@ async def test_success_charges_once_and_records_context(db):
 
 
 @pytest.mark.asyncio
-async def test_api_failure_refunds_and_keeps_context_unchanged(db):
+async def test_dispatched_unknown_failure_consumes_quote_and_keeps_context_unchanged(db):
     async def stream(*args):
         yield "partial"
         raise TimeoutError()
 
     service = ChatService()
-    service.api = SimpleNamespace(stream_answer=stream)
+    service.api = FakeAPI(stream)
     service.begin(message(), db.users[1])
     await service.active[1]
-    assert db.users[1]["tokens"] == 20
+    assert db.users[1]["tokens"] == 19
     assert 1 not in db.contexts
 
 
@@ -89,24 +112,24 @@ async def test_cancellation_and_other_users_remain_responsive(db):
         yield "unreachable"
 
     service = ChatService()
-    service.api = SimpleNamespace(stream_answer=stream)
+    service.api = FakeAPI(stream)
     assert service.begin(message(), db.users[1])
     await entered.wait()
     assert not service.begin(message(message_id=6), db.users[1])
     assert service.begin(message(user_id=2), db.users[2])
     assert await service.stop(1)
-    assert db.users[1]["tokens"] == 20
+    assert db.users[1]["tokens"] == 19
     assert 2 in service.active
     await service.stop(2)
-    assert db.users[2]["tokens"] == 20
+    assert db.users[2]["tokens"] in (19, 20)  # The second request may still be queued.
 
 
 @pytest.mark.asyncio
 async def test_uncertain_database_reservation_is_refunded(db):
     original_reserve = db.reserve
 
-    async def uncertain(*args):
-        await original_reserve(*args)
+    async def uncertain(*args, **kwargs):
+        await original_reserve(*args, **kwargs)
         raise TimeoutError()
 
     db.reserve = uncertain
@@ -117,18 +140,18 @@ async def test_uncertain_database_reservation_is_refunded(db):
 
 
 @pytest.mark.asyncio
-async def test_delivery_failure_refunds(db):
+async def test_delivery_failure_does_not_refund_generated_answer_and_keeps_export(db):
     async def stream(*args):
         yield "answer"
 
     service = ChatService()
-    service.api = SimpleNamespace(stream_answer=stream)
+    service.api = FakeAPI(stream)
     msg = message()
     msg.answer.return_value.edit_text.side_effect = [None, RuntimeError("send failed"), None]
     service.begin(msg, db.users[1])
     await service.active[1]
-    assert db.users[1]["tokens"] == 20
-    assert 1 not in db.contexts
+    assert db.users[1]["tokens"] == 19
+    assert db.contexts[1][-1]["content"] == "answer"
 
 
 @pytest.mark.asyncio
@@ -136,10 +159,10 @@ async def test_stop_waits_for_pending_wallet_commit_before_refund(db):
     entered, release = asyncio.Event(), asyncio.Event()
     original = db.reserve
 
-    async def delayed_reserve(*args):
+    async def delayed_reserve(*args, **kwargs):
         entered.set()
         await release.wait()
-        await original(*args)
+        await original(*args, **kwargs)
 
     db.reserve = delayed_reserve
     service = ChatService()
@@ -184,3 +207,77 @@ async def test_retry_after_photo_does_not_charge_for_missing_image(db):
     await service.active[1]
     assert db.users[1]["tokens"] == 20
     assert "_requests" not in db.users[1]
+
+
+@pytest.mark.asyncio
+async def test_stop_while_queued_is_free_and_releases_cost_budget(db):
+    entered = asyncio.Event()
+    service = ChatService()
+    service.semaphore = asyncio.Semaphore(0)
+    msg = message()
+    original = msg.answer
+
+    async def answer(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        entered.set()
+        return result
+
+    msg.answer = answer
+    service.begin(msg, db.users[1])
+    await asyncio.wait_for(entered.wait(), 2)
+    await service.stop(1)
+    assert db.users[1]["tokens"] == 20
+    assert (await module.finance.report())["cost_micro"] == 0
+
+
+@pytest.mark.asyncio
+async def test_started_stop_is_charged_and_keeps_conservative_api_cost(db):
+    entered = asyncio.Event()
+
+    async def stream(*args):
+        entered.set()
+        await asyncio.Event().wait()
+        yield "unreachable"
+
+    service = ChatService()
+    service.api = FakeAPI(stream)
+    service.begin(message(), db.users[1])
+    await asyncio.wait_for(entered.wait(), 2)
+    await service.stop(1)
+    assert db.users[1]["tokens"] == 19
+    assert (await module.finance.report())["cost_micro"] == 1792
+
+
+@pytest.mark.asyncio
+async def test_token_validation_failure_refunds_without_paid_dispatch(db):
+    from services.openai_request import InputTooLarge
+
+    service = ChatService()
+    service.api = SimpleNamespace(prepare=AsyncMock(side_effect=InputTooLarge("too big")))
+    service.begin(message(), db.users[1])
+    await service.active[1]
+    assert db.users[1]["tokens"] == 20
+    assert (await module.finance.report())["cost_micro"] == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_image_refunds_user_but_retains_potential_output_moderation_cost(db):
+    import httpx
+    from openai import BadRequestError
+
+    error = BadRequestError(
+        "moderated",
+        response=httpx.Response(400, request=httpx.Request("POST", "https://test.invalid")),
+        body={"code": "moderation_blocked"},
+    )
+
+    async def generate(prompt, user_id, *, audit):
+        audit["dispatched"] = True
+        raise error
+
+    service = ChatService()
+    service.api = SimpleNamespace(generate_image=generate)
+    service.begin(message(), db.users[1], kind="image")
+    await service.active[1]
+    assert db.users[1]["tokens"] == 20
+    assert (await module.finance.report())["cost_micro"] == 80000

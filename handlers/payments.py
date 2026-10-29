@@ -62,7 +62,7 @@ async def buy_callback(callback: CallbackQuery):
     await callback.message.answer_invoice(
         title=f"{tokens} токенов Sarah",
         description=f"{tokens} токенов бота. Ответы по тарифу выбранной модели. "
-        "Ошибки и остановленные запросы не оплачиваются. /paysupport — помощь.",
+        "После начала генерации остановленный запрос оплачивается. /paysupport — помощь.",
         payload=payload,
         provider_token="",
         currency="XTR",
@@ -151,6 +151,34 @@ async def successful_payment(message: Message):
         "created_at": time.time() * 1000,
     }
     # The receipt and balance change share one Firebase transaction.
-    await db_service.credit(message.from_user.id, "_payments", key, amount, record)
-    await db_service.set_obj_by_id("payments", key, record)
-    await message.answer(f"Покупка зачислена: {amount} токенов. /tokens — баланс.")
+    result = await db_service.payment(message.from_user.id, key, amount, record)
+    saved = result["_payments"][key]
+    await db_service.set_obj_by_id("payments", key, saved)
+    await db_service.award_referral(message.from_user.id)
+    if saved.get("status") == "refunded":
+        await message.answer("Эта покупка возвращена. Токены за неё не начисляются.")
+    else:
+        await message.answer(f"Покупка зачислена: {amount} токенов. /tokens — баланс.")
+
+
+@router.message(F.refunded_payment)
+async def refunded_payment(message: Message):
+    payment = message.refunded_payment
+    from services.payment_reconciliation import apply_refund
+
+    try:
+        result = await apply_refund(
+            message.from_user.id,
+            payment.invoice_payload,
+            payment.telegram_payment_charge_id,
+            payment.total_amount,
+            payment.currency,
+        )
+    except ValueError:
+        logger.error("Unrecognized refund receipt=%s", receipt_key(payment.telegram_payment_charge_id))
+        await message.answer("Возврат оплаты требует проверки. /paysupport — помощь.")
+        return
+    await message.answer(
+        "Оплата возвращена, начисленные за неё токены отменены. "
+        f"Текущий баланс: {result['tokens']}. /paysupport — помощь."
+    )

@@ -9,8 +9,9 @@ from aiogram.client.session.base import BaseSession
 from aiogram.types import Message, Update
 
 import config
+import services.payment_reconciliation as reconciliation
 from handlers import main_handlers, payments
-from services.wallet import credit_once, ensure_user_record
+from services.wallet import apply_payment, credit_once, ensure_user_record
 
 
 class FakeSession(BaseSession):
@@ -58,6 +59,15 @@ class MemoryDB:
     async def credit(self, user_id, kind, receipt, amount, details=None):
         self.data["users"][user_id] = credit_once(self.data["users"][user_id], kind, receipt, amount, details)
 
+    async def payment(self, user_id, receipt, amount, record, refund=False):
+        self.data["users"][user_id] = apply_payment(
+            self.data["users"][user_id], receipt, amount, record, refund
+        )
+        return self.data["users"][user_id]
+
+    async def award_referral(self, user_id):
+        return None
+
 
 dispatcher = Dispatcher()
 dispatcher.include_router(payments.router)
@@ -71,6 +81,7 @@ def app(monkeypatch):
     bot = Bot(token=config.BOT_TOKEN, session=session)
     monkeypatch.setattr(main_handlers, "db_service", database)
     monkeypatch.setattr(payments, "db_service", database)
+    monkeypatch.setattr(reconciliation, "db_service", database)
     monkeypatch.setattr(config, "STARS_PACKAGES", {110: 99})
     main_handlers.public_waiters.clear()
     main_handlers.public_drafts.clear()
@@ -195,6 +206,30 @@ async def test_successful_payment_is_routed_and_duplicate_is_not_double_credited
     assert app.db.data["users"][42]["tokens"] == 135
     assert len(app.db.data["payments"]) == 1
     app.begin.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refund_first", [False, True])
+async def test_refund_update_wins_regardless_of_delivery_order(app, refund_first):
+    await feed_callback(app, "buy:110")
+    order = next(iter(app.db.data["payment_orders"].values()))
+    receipt = {
+        "currency": "XTR",
+        "total_amount": 99,
+        "invoice_payload": order["payload"],
+        "telegram_payment_charge_id": "refund-charge",
+        "provider_payment_charge_id": "",
+    }
+    refund = {k: v for k, v in receipt.items() if k != "provider_payment_charge_id"}
+    if refund_first:
+        await feed_message(app, refunded_payment=refund)
+    await feed_message(app, successful_payment=receipt)
+    await feed_message(app, refunded_payment=refund)
+    await feed_message(app, refunded_payment=refund)
+    await feed_message(app, successful_payment=receipt)
+    assert app.db.data["users"][42]["tokens"] == 25
+    assert len(app.db.data["payments"]) == 1
+    assert next(iter(app.db.data["payments"].values()))["status"] == "refunded"
 
 
 @pytest.mark.asyncio

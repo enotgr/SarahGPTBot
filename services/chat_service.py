@@ -6,16 +6,28 @@ import logging
 import time
 
 from aiogram.types import BufferedInputFile
+from openai import APIStatusError
 
 import config
-from consts.common import get_model
+from consts.common import get_model, model_key
 from services.context import trim_context
 from services.db_service import db_service
+from services.finance import BudgetExceeded, RateLimited, finance
 from services.openai_request import OpenAIRequest, error_message
-from services.wallet import DuplicateRequest, InsufficientBalance
+from services.pricing import image_cost, reservation_cost, text_cost
+from services.wallet import DuplicateRequest, InsufficientBalance, PromoRestricted
 from utils.handler_utils import StreamingMessage
 
 logger = logging.getLogger(__name__)
+
+
+async def durable(operation):
+    task = asyncio.create_task(operation)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
 
 
 class ChatService:
@@ -86,7 +98,12 @@ class ChatService:
         user_id = message.from_user.id
         delivery = StreamingMessage(message)
         reserved = False
-        success = False
+        audit = {}
+        budget_key = None
+        outcome = "rejected"
+        rejected_by_api = False
+        unbilled_rejection = False
+        mode = model_key(user.get("model"))
         try:
             text = (message.text or message.caption or "").strip()
             context = trim_context(await db_service.get_obj_by_id("contexts", user_id))
@@ -110,16 +127,30 @@ class ChatService:
                     f"{3000 if kind == 'image' else config.MAX_INPUT_CHARS} символов."
                 )
                 return
-            cost = config.IMAGE_COST if kind == "image" else get_model(user.get("model")).cost
+            cost = config.IMAGE_COST if kind == "image" else get_model(mode).cost
             # Mark reservation possible before awaiting: a timed-out DB write may have committed.
             reserved = True
-            reservation = asyncio.create_task(db_service.reserve(user_id, request_id, cost))
-            try:
-                await asyncio.shield(reservation)
-            except asyncio.CancelledError:
-                # A Firebase worker thread cannot be cancelled. Wait for its commit before refunding.
-                await reservation
-                raise
+            wallet = await durable(
+                db_service.reserve(user_id, request_id, cost, allow_promo=kind == "text" and mode == "fast")
+            )
+            category = "promo" if wallet["_requests"][request_id].get("promo_spent") else "paid_or_legacy"
+            if category != "promo" and user_id in set(config.ADMIN_IDS) | config.PERSONAL_USER_IDS:
+                category = "personal"
+            # The stable key allows cleanup even if cancellation interrupts a committed reservation.
+            from services.finance import request_key
+
+            budget_key = request_key(user_id, request_id)
+            await durable(
+                finance.reserve(
+                    user_id,
+                    request_id,
+                    kind,
+                    get_model(mode).id,
+                    category,
+                    cost,
+                    reservation_cost(kind, mode),
+                )
+            )
             await delivery.start()
             started = time.monotonic()
             async with asyncio.timeout(config.REQUEST_TIMEOUT + 60):
@@ -127,8 +158,16 @@ class ChatService:
                     if self.api is None:
                         self.api = OpenAIRequest()
                     if kind == "image":
+                        if len(text.encode("utf-8")) > 6000:
+                            from services.openai_request import InputTooLarge
+
+                            raise InputTooLarge(
+                                "Сократите описание изображения: допустимо до 6000 байт UTF-8."
+                            )
+                        await durable(finance.start(budget_key))
+                        await durable(db_service.start_request(user_id, request_id))
                         await delivery.preview.edit_text("Рисую изображение…  /stop — остановить")
-                        image = await self.api.generate_image(text, user_id)
+                        image = await self.api.generate_image(text, user_id, audit=audit)
                         await message.answer_photo(BufferedInputFile(image, filename="sarah.png"))
                         await delivery.preview.edit_text("Изображение готово. Списано 10 токенов.")
                     else:
@@ -140,26 +179,33 @@ class ChatService:
                             )
                             data = await message.bot.download(photo)
                             image = "data:image/jpeg;base64," + base64.b64encode(data.getvalue()).decode()
+                        prepared = await self.api.prepare(
+                            context, text, mode, user.get("style", "normal"), image
+                        )
+                        await durable(finance.start(budget_key))
+                        await durable(db_service.start_request(user_id, request_id))
                         async for delta in self.api.stream_answer(
                             context,
                             text,
-                            user.get("model"),
+                            mode,
                             user.get("style", "normal"),
                             image,
+                            audit=audit,
+                            prepared=prepared,
                         ):
                             await delivery.append(delta)
-                        await delivery.finish(markup)
                         # Photo contents are not stored. Subsequent turns retain its description.
                         saved_text = ("[Фото] " if image else "") + text
                         updated = trim_context(
-                            context
+                            prepared["context"]
                             + [
                                 {"role": "user", "content": saved_text},
                                 {"role": "assistant", "content": delivery.text},
                             ]
                         )
                         await db_service.set_obj_by_id("contexts", user_id, updated)
-            success = True
+                        await delivery.finish(markup)
+            outcome = "completed"
             logger.info(
                 "Request complete kind=%s model=%s elapsed=%.1f",
                 kind,
@@ -170,20 +216,57 @@ class ChatService:
             reserved = False
             await message.answer("Этот запрос уже обработан. Для нового ответа используйте /retry.")
         except InsufficientBalance:
-            reserved = False
             await message.answer(
                 "Недостаточно токенов для выбранного режима. "
                 "/tokens — баланс, /models — модель дешевле, /ref — бонус за друга."
             )
+        except (PromoRestricted, BudgetExceeded, RateLimited) as exc:
+            await delivery.fail(str(exc))
         except asyncio.CancelledError:
-            await delivery.fail("Генерация остановлена. Токены будут возвращены на баланс.")
+            outcome = "cancelled"
+            await delivery.fail(
+                "Генерация остановлена. "
+                + (
+                    f"Запрос уже отправлен OpenAI; списано {cost} токенов."
+                    if audit.get("dispatched")
+                    else "До генерации токены не списываются."
+                )
+            )
             raise
         except Exception as exc:
-            await delivery.fail(error_message(exc) + "\nТокены за неудачный запрос будут возвращены.")
+            outcome = "failed"
+            rejected_by_api = isinstance(exc, APIStatusError) and exc.status_code in (
+                400,
+                401,
+                403,
+                404,
+                422,
+                429,
+            )
+            unbilled_rejection = isinstance(exc, APIStatusError) and exc.status_code in (401, 403, 404, 429)
+            charged = audit.get("dispatched") and not rejected_by_api
+            await delivery.fail(
+                error_message(exc)
+                + (
+                    "\nЗапрос отправлен OpenAI, его стоимость списана. При проблеме обратитесь в /support."
+                    if charged
+                    else "\nТокены за этот запрос возвращаются."
+                )
+            )
         finally:
+            charge = bool(audit.get("dispatched") and not rejected_by_api)
+            if budget_key:
+                try:
+                    usage = audit.get("usage")
+                    actual = image_cost(usage) if kind == "image" else text_cost(usage, get_model(mode).id)
+                    if not audit.get("dispatched") or unbilled_rejection:
+                        actual = 0
+                    await durable(finance.settle(budget_key, actual, outcome, usage, charge))
+                except Exception as exc:
+                    logger.error("Cost finalization pending: %s", type(exc).__name__)
             if reserved:
                 try:
-                    await asyncio.shield(db_service.finish(user_id, request_id, success))
+                    await durable(db_service.finish(user_id, request_id, charge))
                 except Exception as exc:
                     # Pending reservations are reconciled at the next startup.
                     logger.error("Wallet finalization pending: %s", type(exc).__name__)
