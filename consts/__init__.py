@@ -1,1 +1,1 @@
-from . import db_keys, payment_consts, common, access_keys
+"""Shared constants. Private credentials are loaded explicitly by config only."""

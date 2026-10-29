@@ -1,59 +1,108 @@
-import openai
-from services.db_service import db_service
-from consts.access_keys import OPENAI_ORGANIZATION, OPENAI_API_KEY
-from consts.db_keys import CONTEXTS_DB_KEY
-from consts.common import gpt_models_map
+import base64
+import hashlib
+import logging
 
-# Use your organization and API keys
-openai.organization = OPENAI_ORGANIZATION
-openai.api_key = OPENAI_API_KEY
+from openai import APIStatusError, AsyncOpenAI
+
+import config
+from consts.common import get_model
+
+logger = logging.getLogger(__name__)
+
+
+class IncompleteAnswer(Exception):
+    pass
+
 
 class OpenAIRequest:
-  def lets_talk(self, user_id: int, text: str, current_model: str = 'gpt3') -> str:
-    if not text:
-      return
+    def __init__(self):
+        self.client = AsyncOpenAI(
+            api_key=config.OPENAI_API_KEY,
+            organization=config.OPENAI_ORGANIZATION,
+            project=config.OPENAI_PROJECT,
+            timeout=config.REQUEST_TIMEOUT,
+            max_retries=1,
+        )
 
-    model: str = gpt_models_map[current_model]['name']
+    async def stream_answer(self, context, text, mode, style="normal", image=None):
+        model = get_model(mode)
+        instructions = (
+            "Ты Sarah, полезный помощник в Telegram. Отвечай на языке пользователя. "
+            "Сохраняй контекст. Не утверждай, что искал информацию в интернете: "
+            "доступ к веб-поиску не включён. Используй короткие абзацы и понятное оформление. "
+            "Формулы и код пиши обычным текстом или в блоках кода."
+        )
+        if style == "brief":
+            instructions += " Отвечай кратко, обычно в пределах 3–6 предложений."
+        elif style == "detailed":
+            instructions += " Давай подробные объяснения с полезными примерами."
+        content = text
+        if image:
+            content = [
+                {"type": "input_text", "text": text},
+                {"type": "input_image", "image_url": image, "detail": "low"},
+            ]
+        stream = await self.client.responses.create(
+            model=model.id,
+            instructions=instructions,
+            input=[*context, {"role": "user", "content": content}],
+            reasoning={"effort": model.reasoning},
+            max_output_tokens=model.max_output,
+            store=False,
+            stream=True,
+        )
+        completed = False
+        has_output = False
+        async with stream:
+            async for event in stream:
+                if event.type in ("response.output_text.delta", "response.refusal.delta"):
+                    has_output = has_output or bool(event.delta.strip())
+                    yield event.delta
+                elif event.type == "response.completed":
+                    completed = True
+                elif event.type == "response.incomplete":
+                    if event.response.incomplete_details.reason == "max_output_tokens":
+                        if not has_output:
+                            raise IncompleteAnswer()
+                        yield "\n\n[Достигнут лимит ответа. Попросите продолжить.]"
+                        completed = True
+                    else:
+                        raise IncompleteAnswer()
+                elif event.type in ("response.failed", "error"):
+                    raise IncompleteAnswer()
+        if not completed:
+            raise IncompleteAnswer()
 
-    context: list[dict] = db_service.get_obj_by_id(CONTEXTS_DB_KEY, user_id) or []
+    async def generate_image(self, prompt, user_id):
+        result = await self.client.images.generate(
+            model=config.IMAGE_MODEL,
+            prompt=prompt,
+            n=1,
+            size="1024x1024",
+            quality="low",
+            output_format="png",
+            extra_body={"safety_identifier": hashlib.sha256(str(user_id).encode()).hexdigest()},
+        )
+        if not result.data or not result.data[0].b64_json:
+            raise IncompleteAnswer()
+        return base64.b64decode(result.data[0].b64_json)
 
-    context.append({ 'role': 'user', 'content': text })
+    async def close(self):
+        await self.client.close()
 
-    response = openai.ChatCompletion.create(
-      model=model,
-      messages=context,
-      temperature=0.9,
-      max_tokens=512,
-      top_p=1,
-      frequency_penalty=0.0,
-      presence_penalty=0.6,
-    )
 
-    answer = response.get('choices')[0].get('message').get('content')
-    context.append({ 'role': 'assistant', 'content': answer})
-    db_service.set_obj_by_id(CONTEXTS_DB_KEY, user_id, context)
-
-    return answer
-
-  def generate_image(self, prompt: str) -> str or None:
-    if not prompt:
-      return None
-
-    image_url = None
-
-    try:
-      response = openai.Image.create(
-        model='dall-e-3',
-        prompt=prompt,
-        n=1,
-        size='1024x1024'
-      )
-      image_url = response['data'][0]['url']
-    except:
-      print('Error: Invalid request')
-    return image_url
-
-  def reset_context(self, user_id: int):
-    db_service.set_obj_by_id(CONTEXTS_DB_KEY, user_id, [])
-
-openai_request = OpenAIRequest()
+def error_message(error):
+    if isinstance(error, APIStatusError):
+        logger.warning(
+            "OpenAI failed status=%s code=%s request_id=%s", error.status_code, error.code, error.request_id
+        )
+        if error.status_code == 401:
+            return "Сервис временно недоступен: требуется обновить ключ OpenAI. Администратор должен проверить настройки."
+        if error.status_code == 429:
+            return "OpenAI временно ограничил запросы или исчерпан лимит оплаты. Попробуйте позже."
+        if error.code == "model_not_found" or error.status_code == 404:
+            return "У проекта OpenAI нет доступа к выбранной модели. Попробуйте /models или обратитесь в /support."
+        if error.status_code in (400, 403):
+            return "OpenAI не смог выполнить запрос. Попробуйте изменить формулировку; если ошибка повторяется — /support."
+    logger.warning("Request failed: %s", type(error).__name__)
+    return "Не удалось получить ответ. Попробуйте ещё раз немного позже."

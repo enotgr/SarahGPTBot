@@ -1,1 +1,1 @@
-from . import payments, main_handlers
+"""Telegram routers."""

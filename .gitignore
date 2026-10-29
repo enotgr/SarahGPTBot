@@ -14,3 +14,16 @@ venv
 qr_temp.jpg
 .cache
 test.py
+
+.env
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+.ruff_cache/
+backups/
+*.log
+*.tar.gz
+!deploy/sarah_gpt_bot.service
+.upgrade/
+*.swp

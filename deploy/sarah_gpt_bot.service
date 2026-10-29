@@ -1,0 +1,20 @@
+[Unit]
+Description=Sarah GPT Bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/SarahGPTBot
+ExecStart=/home/SarahGPTBot/.venv/bin/python -u /home/SarahGPTBot/bot.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
